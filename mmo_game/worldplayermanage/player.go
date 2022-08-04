@@ -5,6 +5,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"math/rand"
 	"tcp-demo/iface"
+	"tcp-demo/mmo_game/core"
 	"tcp-demo/mmo_game/pb"
 )
 
@@ -204,6 +205,13 @@ func (p *Player) IsCellChange(newX, newY float32) {
 	if p.cellId == newCellId {
 		return
 	}
+	//获取旧格子周边的格子
+	oldCell := WorldManageInstance.aoiM.GetSurroundCellsByCellId(p.cellId)
+	//获取新格子的周边的格子
+	newCell := WorldManageInstance.aoiM.GetSurroundCellsByCellId(newCellId)
+
+	//九宫格分类计算
+	p.processCells(oldCell, newCell)
 
 	//将玩家从旧格子中移除
 	WorldManageInstance.aoiM.RemovePidFromCellId(p.pid, p.cellId)
@@ -225,4 +233,74 @@ func (p *Player) Offline() {
 	WorldManageInstance.RemovePlayer(p.pid)
 	//从aoi 中删除
 	WorldManageInstance.aoiM.RemovePidFromCellId(p.pid, p.cellId)
+}
+
+func (p *Player) processCells(old []*core.Cell, new []*core.Cell) {
+	//处理新旧格子 获取差异
+	//TODO
+
+	//脱离的九宫格
+	outCells := make([]*core.Cell, 0)
+	var outPlayers *Player
+
+	//获取脱离后的九宫格的玩家 对其通知做消失处理
+	//发送消息给客户端
+	offlineMsg := &pb.SyncPid{Pid: p.pid}
+
+	for _, cell := range outCells {
+		ids := cell.GetPlayersFromCell()
+		for _, pid := range ids {
+			outPlayers = WorldManageInstance.GetPlayerByPid(pid)
+			//其他玩家给客户端通知 这个玩家已经消失在视野
+			outPlayers.sendProtoMsg(201, offlineMsg)
+
+			//给自己的客户端发消息
+			otherOffMsg := &pb.SyncPid{Pid: outPlayers.pid}
+			p.sendProtoMsg(201, otherOffMsg)
+		}
+	}
+
+	//新进的九宫格
+	inCells := make([]*core.Cell, 0)
+	var inPlayers *Player
+
+	//获取新进的九宫格的玩家 对其通知做显示处理
+	//组建MsgID 200 proto数据
+	posMsg := &pb.BroadCast{
+		Pid: p.pid,
+		Tp:  2,
+		Data: &pb.BroadCast_P{
+			P: &pb.Position{
+				X: p.pos.X,
+				Y: p.pos.Y,
+				Z: p.pos.Z,
+				V: p.pos.V,
+			},
+		},
+	}
+
+	for _, cell := range inCells {
+		ids := cell.GetPlayersFromCell()
+		for _, pid := range ids {
+			inPlayers = WorldManageInstance.GetPlayerByPid(pid)
+			//给客户端通知 这个玩家已经出现在视野中
+			inPlayers.sendProtoMsg(200, posMsg)
+
+			//给自己的客户端发消息 展示其他人的位置信息
+			inPosMsg := &pb.BroadCast{
+				Pid: p.pid,
+				Tp:  2,
+				Data: &pb.BroadCast_P{
+					P: &pb.Position{
+						X: inPlayers.pos.X,
+						Y: inPlayers.pos.Y,
+						Z: inPlayers.pos.Z,
+						V: inPlayers.pos.V,
+					},
+				},
+			}
+			p.sendProtoMsg(200, inPosMsg)
+		}
+	}
+
 }
